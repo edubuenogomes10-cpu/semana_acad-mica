@@ -5,13 +5,14 @@ const multer = require("multer");
 const mysql = require("mysql2/promise");
 const QRCode = require("qrcode");
 const fs = require("fs");
+const os = require("os");
 const path = require("path");
 
 const app = express();
 const port = Number(process.env.PORT || 3000);
 const isVercel = Boolean(process.env.VERCEL);
-const baseRuntimeDir = process.env.VERCEL
-  ? path.join("/tmp", "semana-academica")
+const baseRuntimeDir = isVercel
+  ? path.join(os.tmpdir(), "semana-academica")
   : __dirname;
 const uploadsDir = path.join(baseRuntimeDir, "uploads");
 const dataDir = path.join(baseRuntimeDir, "data");
@@ -75,8 +76,8 @@ app.get("/admin", (_req, res) => {
   res.sendFile(path.join(__dirname, "admin.html"));
 });
 
-app.get("/:asset(styles.css|script.js|admin.js|index.html|admin.html)", (req, res) => {
-  res.sendFile(path.join(__dirname, req.params.asset));
+app.get(["/styles.css", "/script.js", "/admin.js", "/index.html", "/admin.html"], (req, res) => {
+  res.sendFile(path.join(__dirname, path.basename(req.path)));
 });
 
 app.get("/api/health", (_req, res) => {
