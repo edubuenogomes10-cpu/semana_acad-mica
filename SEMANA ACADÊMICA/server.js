@@ -58,11 +58,18 @@ const upload = multer({
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-app.use(express.static(__dirname));
 app.use("/uploads", express.static(uploadsDir));
+
+app.get("/", (_req, res) => {
+  res.sendFile(path.join(__dirname, "index.html"));
+});
 
 app.get("/admin", (_req, res) => {
   res.sendFile(path.join(__dirname, "admin.html"));
+});
+
+app.get("/:asset(styles.css|script.js|admin.js|index.html|admin.html)", (req, res) => {
+  res.sendFile(path.join(__dirname, req.params.asset));
 });
 
 app.get("/api/health", (_req, res) => {
@@ -355,15 +362,27 @@ async function writeFallbackRegistrations(rows) {
   await fs.promises.writeFile(fallbackDatabaseFile, `${JSON.stringify(rows, null, 2)}\n`, "utf8");
 }
 
-createStorageApi()
+const ready = createStorageApi()
   .then((api) => {
     storageApi = api;
-
-    app.listen(port, () => {
-      console.log(`Servidor rodando em http://localhost:${port}`);
-    });
+    return app;
   })
   .catch((error) => {
     console.error("Erro ao iniciar o backend:", error.message);
-    process.exit(1);
+    throw error;
   });
+
+if (require.main === module) {
+  ready
+    .then(() => {
+      app.listen(port, () => {
+        console.log(`Servidor rodando em http://localhost:${port}`);
+      });
+    })
+    .catch(() => {
+      process.exit(1);
+    });
+}
+
+module.exports = app;
+module.exports.ready = ready;
