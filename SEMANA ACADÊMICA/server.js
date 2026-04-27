@@ -9,6 +9,7 @@ const path = require("path");
 
 const app = express();
 const port = Number(process.env.PORT || 3000);
+const isVercel = Boolean(process.env.VERCEL);
 const baseRuntimeDir = process.env.VERCEL
   ? path.join("/tmp", "semana-academica")
   : __dirname;
@@ -24,16 +25,19 @@ if (!fs.existsSync(fallbackDatabaseFile)) {
   fs.writeFileSync(fallbackDatabaseFile, "[]\n", "utf8");
 }
 
-const pool = mysql.createPool({
-  host: process.env.DB_HOST || "localhost",
-  port: Number(process.env.DB_PORT || 3306),
-  user: process.env.DB_USER || "root",
-  password: process.env.DB_PASSWORD || "",
-  database: process.env.DB_NAME || "semanacademica",
-  waitForConnections: true,
-  connectionLimit: 10,
-  queueLimit: 0
-});
+const pool = isVercel
+  ? null
+  : mysql.createPool({
+      host: process.env.DB_HOST || "localhost",
+      port: Number(process.env.DB_PORT || 3306),
+      user: process.env.DB_USER || "root",
+      password: process.env.DB_PASSWORD || "",
+      database: process.env.DB_NAME || "semanacademica",
+      waitForConnections: true,
+      connectionLimit: 10,
+      queueLimit: 0,
+      connectTimeout: 3000
+    });
 
 const storage = multer.diskStorage({
   destination: (_req, _file, cb) => cb(null, uploadsDir),
@@ -211,6 +215,12 @@ function requireAdminPassword(req, res, next) {
 }
 
 async function createStorageApi() {
+  if (isVercel) {
+    activeStorageMode = "file";
+    console.warn("Ambiente Vercel detectado. Usando armazenamento local temporario em arquivo.");
+    return createFileStorage();
+  }
+
   try {
     await pool.query("SELECT 1");
     await pool.query(`
