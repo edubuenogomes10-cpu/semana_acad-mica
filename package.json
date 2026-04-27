@@ -1,0 +1,16 @@
+{
+  "name": "semana-academica-site-root",
+  "version": "1.0.0",
+  "private": true,
+  "main": "api/index.js",
+  "scripts": {
+    "start": "node \"SEMANA ACADÊMICA/server.js\""
+  },
+  "dependencies": {
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "multer": "^2.1.1",
+    "mysql2": "^3.22.2",
+    "qrcode": "^1.5.4"
+  }
+}
