@@ -4,7 +4,7 @@
   "private": true,
   "main": "api/index.js",
   "scripts": {
-    "start": "node \"SEMANA ACADÊMICA/server.js\""
+    "start": "node server.js"
   },
   "dependencies": {
     "dotenv": "^17.4.2",
