@@ -9,8 +9,11 @@ const path = require("path");
 
 const app = express();
 const port = Number(process.env.PORT || 3000);
-const uploadsDir = path.join(__dirname, "uploads");
-const dataDir = path.join(__dirname, "data");
+const baseRuntimeDir = process.env.VERCEL
+  ? path.join("/tmp", "semana-academica")
+  : __dirname;
+const uploadsDir = path.join(baseRuntimeDir, "uploads");
+const dataDir = path.join(baseRuntimeDir, "data");
 const fallbackDatabaseFile = path.join(dataDir, "registrations.json");
 const adminPassword = process.env.ADMIN_PASSWORD || "Ideau@2026";
 
@@ -103,6 +106,15 @@ app.post("/api/qrcode", async (req, res) => {
 
 let activeStorageMode = "file";
 let storageApi;
+
+app.use(async (_req, _res, next) => {
+  try {
+    await ready;
+    next();
+  } catch (error) {
+    next(error);
+  }
+});
 
 app.get("/api/registrations", requireAdminPassword, async (_req, res) => {
   try {
