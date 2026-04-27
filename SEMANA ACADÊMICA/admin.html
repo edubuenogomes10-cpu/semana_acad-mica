@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Painel | Semana Acadêmica</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&family=Sora:wght@500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <main class="site-shell admin-shell">
+    <section class="hero-panel admin-hero">
+      <div class="hero-content">
+        <p class="kicker">Painel administrativo</p>
+        <h1>Conferência dos pagamentos por curso.</h1>
+        <p class="lead">Acompanhe os inscritos, abra comprovantes e atualize os status sem sair do navegador.</p>
+      </div>
+
+      <aside class="hero-sidebar">
+        <div class="hero-card glass-card">
+          <p class="card-label">Total de inscritos</p>
+          <strong id="registrationCount" class="big-number">0 inscritos</strong>
+          <p class="support-text">Os dados são atualizados ao recarregar a página.</p>
+        </div>
+
+        <div class="hero-card accent-card">
+          <a class="secondary-button wide-button" href="/index.html">Voltar para inscrição</a>
+        </div>
+      </aside>
+    </section>
+
+    <section class="glass-card admin-panel">
+      <div class="section-head">
+        <div>
+          <p class="kicker">Inscrições</p>
+          <h2>Lista de participantes</h2>
+        </div>
+        <div class="admin-toolbar">
+          <label class="field admin-filter">
+            <span>Filtrar por curso</span>
+            <select id="courseFilter">
+              <option value="todos">Todos</option>
+              <option value="CSA">CSA</option>
+              <option value="Direito">Direito</option>
+              <option value="Agronomia">Agronomia</option>
+              <option value="Psicologia">Psicologia</option>
+            </select>
+          </label>
+          <button type="button" id="logoutButton" class="secondary-button">Sair do painel</button>
+        </div>
+      </div>
+
+      <div class="table-scroll">
+        <table class="admin-table">
+          <thead>
+            <tr>
+              <th>Aluno</th>
+              <th>Curso</th>
+              <th>Contato</th>
+              <th>Data</th>
+              <th>Status</th>
+              <th>Comprovante</th>
+              <th>Ações</th>
+            </tr>
+          </thead>
+          <tbody id="registrationsTableBody">
+            <tr>
+              <td colspan="7">Faça login para visualizar as inscrições.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="adminAuthCard" class="auth-overlay">
+      <div class="auth-card glass-card">
+        <p class="kicker">Acesso restrito</p>
+        <h2>Entrar no painel administrativo</h2>
+        <p class="support-text">Digite a senha para visualizar os dados e validar os comprovantes.</p>
+        <form id="adminLoginForm" class="auth-form">
+          <label class="field">
+            <span>Senha</span>
+            <input id="adminPassword" name="adminPassword" type="password" placeholder="Digite a senha do painel" required />
+          </label>
+          <button type="submit" class="primary-button">Entrar</button>
+          <p id="authMessage" class="status-message">O painel administrativo está protegido por senha.</p>
+        </form>
+      </div>
+    </section>
+  </main>
+
+  <script src="admin.js"></script>
+</body>
+</html>
