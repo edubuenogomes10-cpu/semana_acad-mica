@@ -499,7 +499,10 @@ function createDatabasePool() {
   if (databaseUrl) {
     return new Pool({
       connectionString: databaseUrl,
-      ssl: isVercel ? { rejectUnauthorized: false } : false
+      ssl: isVercel ? { rejectUnauthorized: false } : false,
+      connectionTimeoutMillis: 10000,
+      idleTimeoutMillis: 30000,
+      keepAlive: true
     });
   }
 
