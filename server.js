@@ -2,7 +2,7 @@ require("dotenv").config();
 
 const express = require("express");
 const multer = require("multer");
-const mysql = require("mysql2/promise");
+const { Pool } = require("pg");
 const QRCode = require("qrcode");
 const fs = require("fs");
 const os = require("os");
@@ -18,6 +18,7 @@ const uploadsDir = path.join(baseRuntimeDir, "uploads");
 const dataDir = path.join(baseRuntimeDir, "data");
 const fallbackDatabaseFile = path.join(dataDir, "registrations.json");
 const adminPassword = process.env.ADMIN_PASSWORD || "Ideau@2026";
+const databaseUrl = process.env.DATABASE_URL || process.env.POSTGRES_URL || process.env.SUPABASE_DB_URL || "";
 
 fs.mkdirSync(uploadsDir, { recursive: true });
 fs.mkdirSync(dataDir, { recursive: true });
@@ -26,31 +27,10 @@ if (!fs.existsSync(fallbackDatabaseFile)) {
   fs.writeFileSync(fallbackDatabaseFile, "[]\n", "utf8");
 }
 
-const pool = isVercel
-  ? null
-  : mysql.createPool({
-      host: process.env.DB_HOST || "localhost",
-      port: Number(process.env.DB_PORT || 3306),
-      user: process.env.DB_USER || "root",
-      password: process.env.DB_PASSWORD || "",
-      database: process.env.DB_NAME || "semanacademica",
-      waitForConnections: true,
-      connectionLimit: 10,
-      queueLimit: 0,
-      connectTimeout: 3000
-    });
-
-const storage = multer.diskStorage({
-  destination: (_req, _file, cb) => cb(null, uploadsDir),
-  filename: (_req, file, cb) => {
-    const timestamp = Date.now();
-    const safeOriginal = file.originalname.replace(/[^a-zA-Z0-9._-]/g, "-");
-    cb(null, `${timestamp}-${safeOriginal}`);
-  }
-});
+const pool = createDatabasePool();
 
 const upload = multer({
-  storage,
+  storage: multer.memoryStorage(),
   limits: { fileSize: 8 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
     const allowedTypes = ["application/pdf", "image/jpeg", "image/png", "image/webp"];
@@ -66,7 +46,6 @@ const upload = multer({
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-app.use("/uploads", express.static(uploadsDir));
 
 app.get("/", (_req, res) => {
   res.sendFile(path.join(__dirname, "index.html"));
@@ -78,6 +57,18 @@ app.get("/admin", (_req, res) => {
 
 app.get(["/styles.css", "/script.js", "/admin.js", "/index.html", "/admin.html"], (req, res) => {
   res.sendFile(path.join(__dirname, path.basename(req.path)));
+});
+
+let activeStorageMode = "file";
+let storageApi;
+
+app.use(async (_req, _res, next) => {
+  try {
+    await ready;
+    next();
+  } catch (error) {
+    next(error);
+  }
 });
 
 app.get("/api/health", (_req, res) => {
@@ -106,18 +97,6 @@ app.post("/api/qrcode", async (req, res) => {
   } catch (error) {
     console.error(error);
     res.status(500).json({ message: "Não foi possível gerar o QR Code." });
-  }
-});
-
-let activeStorageMode = "file";
-let storageApi;
-
-app.use(async (_req, _res, next) => {
-  try {
-    await ready;
-    next();
-  } catch (error) {
-    next(error);
   }
 });
 
@@ -156,6 +135,39 @@ app.patch("/api/registrations/:id/status", requireAdminPassword, async (req, res
   }
 });
 
+app.get("/api/registrations/:id/proof", requireAdminPassword, async (req, res) => {
+  try {
+    const registrationId = Number(req.params.id);
+
+    if (!registrationId) {
+      res.status(400).json({ message: "Inscrição inválida." });
+      return;
+    }
+
+    const proof = await storageApi.getRegistrationProof(registrationId);
+
+    if (!proof) {
+      res.status(404).json({ message: "Comprovante não encontrado." });
+      return;
+    }
+
+    if (proof.buffer) {
+      res.setHeader("Content-Type", proof.mimeType || "application/octet-stream");
+      res.setHeader(
+        "Content-Disposition",
+        `inline; filename="${encodeDownloadName(proof.originalName || "comprovante")}"`
+      );
+      res.send(proof.buffer);
+      return;
+    }
+
+    res.download(proof.filePath, proof.originalName || path.basename(proof.filePath));
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "Não foi possível carregar o comprovante." });
+  }
+});
+
 app.post("/api/registrations", upload.single("paymentProof"), async (req, res) => {
   try {
     const { course, studentName, cpf, email, phone, pixPayload, receiverName, pixKey, amount } = req.body;
@@ -176,8 +188,9 @@ app.post("/api/registrations", upload.single("paymentProof"), async (req, res) =
       pixKey,
       amount: Number(amount),
       paymentStatus: "aguardando_conferencia",
-      proofPath: `/uploads/${req.file.filename}`,
-      proofOriginalName: req.file.originalname
+      proofOriginalName: req.file.originalname,
+      proofMimeType: req.file.mimetype,
+      proofBuffer: req.file.buffer
     });
 
     res.status(201).json({
@@ -216,17 +229,21 @@ function requireAdminPassword(req, res, next) {
 }
 
 async function createStorageApi() {
-  if (isVercel) {
-    activeStorageMode = "file";
-    console.warn("Ambiente Vercel detectado. Usando armazenamento local temporario em arquivo.");
-    return createFileStorage();
-  }
-
   try {
+    if (!pool) {
+      if (isVercel) {
+        throw new Error("Banco de dados não configurado no Vercel.");
+      }
+
+      activeStorageMode = "file";
+      console.warn("Banco de dados não configurado. Usando armazenamento local em arquivo.");
+      return createFileStorage();
+    }
+
     await pool.query("SELECT 1");
     await pool.query(`
       CREATE TABLE IF NOT EXISTS registrations (
-        id INT AUTO_INCREMENT PRIMARY KEY,
+        id BIGSERIAL PRIMARY KEY,
         course VARCHAR(100) NOT NULL,
         student_name VARCHAR(255) NOT NULL,
         cpf VARCHAR(20) NOT NULL,
@@ -235,48 +252,61 @@ async function createStorageApi() {
         pix_payload TEXT NOT NULL,
         receiver_name VARCHAR(255) NOT NULL,
         pix_key VARCHAR(255) NOT NULL,
-        amount DECIMAL(10,2) NOT NULL,
+        amount NUMERIC(10,2) NOT NULL,
         payment_status VARCHAR(50) NOT NULL DEFAULT 'aguardando_conferencia',
-        proof_path VARCHAR(255) NOT NULL,
         proof_original_name VARCHAR(255) NOT NULL,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        proof_mime_type VARCHAR(100) NOT NULL DEFAULT 'application/octet-stream',
+        proof_data BYTEA NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )
     `);
 
-    activeStorageMode = "mysql";
-    console.log("Storage ativo: MySQL");
-    return createMysqlStorage();
+    await ensurePgColumn("proof_original_name", "VARCHAR(255) NOT NULL DEFAULT 'comprovante'");
+    await ensurePgColumn("proof_mime_type", "VARCHAR(100) NOT NULL DEFAULT 'application/octet-stream'");
+    await ensurePgColumn("proof_data", "BYTEA");
+    await dropPgColumnIfExists("proof_path");
+
+    activeStorageMode = "postgres";
+    console.log("Storage ativo: Postgres/Supabase");
+    return createPostgresStorage();
   } catch (error) {
+    if (isVercel) {
+      console.error("Postgres indisponível em produção:", error.message);
+      throw error;
+    }
+
     activeStorageMode = "file";
-    console.warn("MySQL indisponível. Usando armazenamento local em arquivo.");
+    console.warn("Postgres indisponível. Usando armazenamento local em arquivo.");
     return createFileStorage();
   }
 }
 
-function createMysqlStorage() {
+function createPostgresStorage() {
   return {
     async listRegistrations() {
-      const [rows] = await pool.query(`
+      const { rows } = await pool.query(`
         SELECT
           id,
           course,
-          student_name AS studentName,
+          student_name AS "studentName",
           cpf,
           email,
           phone,
-          payment_status AS paymentStatus,
-          proof_original_name AS proofOriginalName,
-          proof_path AS proofPath,
-          created_at AS createdAt
+          payment_status AS "paymentStatus",
+          proof_original_name AS "proofOriginalName",
+          created_at AS "createdAt"
         FROM registrations
         ORDER BY created_at DESC
       `);
 
-      return rows;
+      return rows.map((row) => ({
+        ...row,
+        proofPath: `/api/registrations/${row.id}/proof`
+      }));
     },
 
     async createRegistration(registration) {
-      const [result] = await pool.query(
+      const { rows } = await pool.query(
         `
           INSERT INTO registrations (
             course,
@@ -289,9 +319,11 @@ function createMysqlStorage() {
             pix_key,
             amount,
             payment_status,
-            proof_path,
-            proof_original_name
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            proof_original_name,
+            proof_mime_type,
+            proof_data
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+          RETURNING id
         `,
         [
           registration.course,
@@ -304,21 +336,47 @@ function createMysqlStorage() {
           registration.pixKey,
           registration.amount,
           registration.paymentStatus,
-          registration.proofPath,
-          registration.proofOriginalName
+          registration.proofOriginalName,
+          registration.proofMimeType,
+          registration.proofBuffer
         ]
       );
 
-      return { id: result.insertId };
+      return { id: rows[0].id };
     },
 
     async updateStatus(id, status) {
-      const [result] = await pool.query(
-        "UPDATE registrations SET payment_status = ? WHERE id = ?",
+      const result = await pool.query(
+        "UPDATE registrations SET payment_status = $1 WHERE id = $2",
         [status, id]
       );
 
-      return Boolean(result.affectedRows);
+      return Boolean(result.rowCount);
+    },
+
+    async getRegistrationProof(id) {
+      const { rows } = await pool.query(
+        `
+          SELECT
+            proof_original_name AS "originalName",
+            proof_mime_type AS "mimeType",
+            proof_data AS "proofData"
+          FROM registrations
+          WHERE id = $1
+          LIMIT 1
+        `,
+        [id]
+      );
+
+      if (!rows.length) {
+        return null;
+      }
+
+      return {
+        originalName: rows[0].originalName,
+        mimeType: rows[0].mimeType,
+        buffer: rows[0].proofData
+      };
     }
   };
 }
@@ -327,12 +385,18 @@ function createFileStorage() {
   return {
     async listRegistrations() {
       const rows = await readFallbackRegistrations();
-      return rows.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+      return rows
+        .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+        .map((row) => ({
+          ...row,
+          proofPath: `/api/registrations/${row.id}/proof`
+        }));
     },
 
     async createRegistration(registration) {
       const rows = await readFallbackRegistrations();
       const nextId = rows.reduce((highest, row) => Math.max(highest, Number(row.id) || 0), 0) + 1;
+      const proofStoredName = await saveProofToDisk(registration.proofOriginalName, registration.proofBuffer);
       const entry = {
         id: nextId,
         course: registration.course,
@@ -345,8 +409,9 @@ function createFileStorage() {
         pixKey: registration.pixKey,
         amount: registration.amount,
         paymentStatus: registration.paymentStatus,
-        proofPath: registration.proofPath,
         proofOriginalName: registration.proofOriginalName,
+        proofMimeType: registration.proofMimeType,
+        proofStoredName,
         createdAt: new Date().toISOString()
       };
 
@@ -366,6 +431,20 @@ function createFileStorage() {
       target.paymentStatus = status;
       await writeFallbackRegistrations(rows);
       return true;
+    },
+
+    async getRegistrationProof(id) {
+      const rows = await readFallbackRegistrations();
+      const target = rows.find((row) => Number(row.id) === Number(id));
+
+      if (!target?.proofStoredName) {
+        return null;
+      }
+
+      return {
+        originalName: target.proofOriginalName,
+        filePath: path.join(uploadsDir, target.proofStoredName)
+      };
     }
   };
 }
@@ -383,6 +462,60 @@ async function readFallbackRegistrations() {
 
 async function writeFallbackRegistrations(rows) {
   await fs.promises.writeFile(fallbackDatabaseFile, `${JSON.stringify(rows, null, 2)}\n`, "utf8");
+}
+
+function createDatabasePool() {
+  if (databaseUrl) {
+    return new Pool({
+      connectionString: databaseUrl,
+      ssl: isVercel ? { rejectUnauthorized: false } : false
+    });
+  }
+
+  return null;
+}
+
+async function ensurePgColumn(columnName, definition) {
+  const result = await pool.query(
+    `
+      SELECT 1
+      FROM information_schema.columns
+      WHERE table_name = 'registrations' AND column_name = $1
+    `,
+    [columnName]
+  );
+
+  if (!result.rowCount) {
+    await pool.query(`ALTER TABLE registrations ADD COLUMN ${columnName} ${definition}`);
+  }
+}
+
+async function dropPgColumnIfExists(columnName) {
+  const result = await pool.query(
+    `
+      SELECT 1
+      FROM information_schema.columns
+      WHERE table_name = 'registrations' AND column_name = $1
+    `,
+    [columnName]
+  );
+
+  if (result.rowCount) {
+    await pool.query(`ALTER TABLE registrations DROP COLUMN ${columnName}`);
+  }
+}
+
+async function saveProofToDisk(originalName, buffer) {
+  const timestamp = Date.now();
+  const safeOriginal = String(originalName || "comprovante").replace(/[^a-zA-Z0-9._-]/g, "-");
+  const storedName = `${timestamp}-${safeOriginal}`;
+  const fullPath = path.join(uploadsDir, storedName);
+  await fs.promises.writeFile(fullPath, buffer);
+  return storedName;
+}
+
+function encodeDownloadName(value) {
+  return String(value).replace(/"/g, "");
 }
 
 const ready = createStorageApi()
