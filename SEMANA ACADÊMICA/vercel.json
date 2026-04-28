@@ -1,9 +1,18 @@
 {
   "version": 2,
+  "functions": {
+    "api/index.js": {
+      "maxDuration": 30
+    }
+  },
   "rewrites": [
     {
-      "source": "/(.*)",
-      "destination": "/api"
+      "source": "/api/(.*)",
+      "destination": "/api/index.js"
+    },
+    {
+      "source": "/admin",
+      "destination": "/admin.html"
     }
   ]
 }

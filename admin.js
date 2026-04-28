@@ -45,6 +45,18 @@ logoutButton.addEventListener("click", () => {
 });
 
 tableBody.addEventListener("click", async (event) => {
+  const proofLink = event.target.closest("a.proof-link[data-proof-path]");
+  if (proofLink) {
+    event.preventDefault();
+
+    try {
+      await openProofFile(proofLink.dataset.proofPath, proofLink.dataset.proofName || "comprovante");
+    } catch (error) {
+      alert(error.message);
+    }
+    return;
+  }
+
   const button = event.target.closest("button[data-id][data-status]");
   if (!button) {
     return;
@@ -124,7 +136,7 @@ function renderRegistrations() {
           </td>
           <td>${formattedDate}</td>
           <td><span class="status-pill ${statusClassName(registration.paymentStatus)}">${formatStatus(registration.paymentStatus)}</span></td>
-          <td><a class="proof-link" href="${registration.proofPath}" target="_blank" rel="noreferrer">${escapeHtml(registration.proofOriginalName)}</a></td>
+          <td><a class="proof-link" href="${registration.proofPath}" data-proof-path="${escapeHtml(registration.proofPath)}" data-proof-name="${escapeHtml(registration.proofOriginalName)}">${escapeHtml(registration.proofOriginalName)}</a></td>
           <td>
             <div class="action-group">
               <button type="button" class="table-action confirm-action" data-id="${registration.id}" data-status="pago_confirmado">Confirmar</button>
@@ -175,6 +187,43 @@ function getSavedPassword() {
 
 function unlockAdmin() {
   adminAuthCard.classList.add("hidden");
+}
+
+async function openProofFile(proofPath, proofName) {
+  const proofWindow = window.open("", "_blank");
+
+  if (!proofWindow) {
+    throw new Error("O navegador bloqueou a abertura do comprovante. Permita pop-ups e tente de novo.");
+  }
+
+  proofWindow.opener = null;
+  proofWindow.document.title = proofName;
+  proofWindow.document.body.innerHTML = "<p style=\"font-family: sans-serif; padding: 16px;\">Carregando comprovante...</p>";
+
+  const response = await fetch(proofPath, {
+    headers: {
+      "x-admin-password": getSavedPassword()
+    }
+  });
+
+  if (!response.ok) {
+    let message = "Não foi possível abrir o comprovante.";
+
+    try {
+      const result = await response.json();
+      message = result.message || message;
+    } catch {
+      // Keep the fallback message when the response is not JSON.
+    }
+
+    proofWindow.close();
+    throw new Error(message);
+  }
+
+  const blob = await response.blob();
+  const objectUrl = URL.createObjectURL(blob);
+  proofWindow.location.href = objectUrl;
+  setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
 }
 
 function handleAuthError(error) {
