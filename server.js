@@ -18,7 +18,12 @@ const uploadsDir = path.join(baseRuntimeDir, "uploads");
 const dataDir = path.join(baseRuntimeDir, "data");
 const fallbackDatabaseFile = path.join(dataDir, "registrations.json");
 const adminPassword = process.env.ADMIN_PASSWORD || "Ideau@2026";
-const databaseUrl = process.env.DATABASE_URL || process.env.POSTGRES_URL || process.env.SUPABASE_DB_URL || "";
+const databaseUrl =
+  process.env.DATABASE_URL ||
+  process.env.POSTGRES_URL ||
+  process.env.SUPABASE_DB_URL ||
+  process.env.URL_DO_BANCO_DE_DADOS ||
+  "";
 
 fs.mkdirSync(uploadsDir, { recursive: true });
 fs.mkdirSync(dataDir, { recursive: true });
@@ -61,18 +66,15 @@ app.get(["/styles.css", "/script.js", "/admin.js", "/index.html", "/admin.html"]
 
 let activeStorageMode = "file";
 let storageApi;
+let storageError = null;
 
-app.use(async (_req, _res, next) => {
-  try {
-    await ready;
-    next();
-  } catch (error) {
-    next(error);
-  }
-});
-
-app.get("/api/health", (_req, res) => {
-  res.json({ ok: true, storage: activeStorageMode });
+app.get("/api/health", async (_req, res) => {
+  await ready;
+  res.status(storageError ? 500 : 200).json({
+    ok: !storageError,
+    storage: activeStorageMode,
+    error: storageError?.message || null
+  });
 });
 
 app.post("/api/qrcode", async (req, res) => {
@@ -102,6 +104,10 @@ app.post("/api/qrcode", async (req, res) => {
 
 app.get("/api/registrations", requireAdminPassword, async (_req, res) => {
   try {
+    if (!await ensureStorageReady(res)) {
+      return;
+    }
+
     const rows = await storageApi.listRegistrations();
     res.json(rows);
   } catch (error) {
@@ -112,6 +118,10 @@ app.get("/api/registrations", requireAdminPassword, async (_req, res) => {
 
 app.patch("/api/registrations/:id/status", requireAdminPassword, async (req, res) => {
   try {
+    if (!await ensureStorageReady(res)) {
+      return;
+    }
+
     const registrationId = Number(req.params.id);
     const { status } = req.body;
     const allowedStatuses = ["aguardando_conferencia", "pago_confirmado", "recusado"];
@@ -137,6 +147,10 @@ app.patch("/api/registrations/:id/status", requireAdminPassword, async (req, res
 
 app.get("/api/registrations/:id/proof", requireAdminPassword, async (req, res) => {
   try {
+    if (!await ensureStorageReady(res)) {
+      return;
+    }
+
     const registrationId = Number(req.params.id);
 
     if (!registrationId) {
@@ -170,6 +184,10 @@ app.get("/api/registrations/:id/proof", requireAdminPassword, async (req, res) =
 
 app.post("/api/registrations", upload.single("paymentProof"), async (req, res) => {
   try {
+    if (!await ensureStorageReady(res)) {
+      return;
+    }
+
     const { course, studentName, cpf, email, phone, pixPayload, receiverName, pixKey, amount } = req.body;
 
     if (!course || !studentName || !cpf || !email || !phone || !pixPayload || !req.file) {
@@ -226,6 +244,19 @@ function requireAdminPassword(req, res, next) {
   }
 
   next();
+}
+
+async function ensureStorageReady(res) {
+  await ready;
+
+  if (storageError || !storageApi) {
+    res.status(500).json({
+      message: storageError?.message || "Banco de dados indisponível no momento."
+    });
+    return false;
+  }
+
+  return true;
 }
 
 async function createStorageApi() {
@@ -521,22 +552,23 @@ function encodeDownloadName(value) {
 const ready = createStorageApi()
   .then((api) => {
     storageApi = api;
+    storageError = null;
     return app;
   })
   .catch((error) => {
+    storageApi = null;
+    storageError = error;
+    activeStorageMode = "error";
     console.error("Erro ao iniciar o backend:", error.message);
-    throw error;
+    return app;
   });
 
 if (require.main === module) {
   ready
-    .then(() => {
+    .finally(() => {
       app.listen(port, () => {
         console.log(`Servidor rodando em http://localhost:${port}`);
       });
-    })
-    .catch(() => {
-      process.exit(1);
     });
 }
 
