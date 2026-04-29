@@ -372,10 +372,15 @@ function buildTxid(studentName, course, txidPrefix = DEFAULT_PIX_CONFIG.txidPref
 }
 
 function buildPixPayload({ pixKey, receiverName, city, description, amount, txid }) {
+  const pixKeyField = formatField("01", pixKey);
+  const maxMerchantAccountLength = 99;
+  const staticMerchantAccountLength = formatField("00", "br.gov.bcb.pix").length + pixKeyField.length;
+  const maxDescriptionLength = Math.max(0, Math.min(72, maxMerchantAccountLength - staticMerchantAccountLength - 4));
+  const sanitizedDescription = sanitizePixText(description, maxDescriptionLength);
   const merchantAccount = [
     formatField("00", "br.gov.bcb.pix"),
-    formatField("01", pixKey),
-    formatField("02", description.slice(0, 72))
+    pixKeyField,
+    formatField("02", sanitizedDescription)
   ].join("");
 
   const payloadWithoutCrc = [
