@@ -11,8 +11,12 @@
       "destination": "/api/index.js"
     },
     {
-      "source": "/admin",
-      "destination": "/admin.html"
+      "source": "/",
+      "destination": "/api/index.js"
+    },
+    {
+      "source": "/(.*)",
+      "destination": "/api/index.js"
     }
   ]
 }
