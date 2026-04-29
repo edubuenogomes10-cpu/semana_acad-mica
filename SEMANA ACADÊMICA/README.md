@@ -25,8 +25,11 @@ Se estiver na Vercel sem essas variáveis, a API falha de forma explícita em ve
 1. Confira o arquivo `.env`
 2. Ajuste, se necessário:
 - `ADMIN_PASSWORD`
+- `DATABASE_POOL_URL` para Vercel/Supabase pooler
 - `DATABASE_URL`
 - `PORT`
+- `SITE_URL` para definir a URL oficial de produção
+- `LEGACY_HOSTS` para redirecionar domínios/hosts antigos separados por vírgula
 
 ## Instalar dependências
 ```bash
@@ -37,6 +40,10 @@ npm install
 ```bash
 npm start
 ```
+
+## Dica para Vercel + Supabase
+Se aparecer erro como `Connection terminated due to connection timeout`, use a URL pooled do Supabase em `DATABASE_POOL_URL`.
+Em ambiente serverless isso costuma ser mais estável do que a conexão direta em `DATABASE_URL`.
 
 ## Acessos
 - Inscrição: `http://localhost:3000`

@@ -19,11 +19,26 @@ const dataDir = path.join(baseRuntimeDir, "data");
 const fallbackDatabaseFile = path.join(dataDir, "registrations.json");
 const adminPassword = process.env.ADMIN_PASSWORD || "Ideau@2026";
 const databaseUrl =
+  process.env.DATABASE_POOL_URL ||
+  process.env.SUPABASE_POOLER_URL ||
+  process.env.POSTGRES_PRISMA_URL ||
+  process.env.DIRECT_URL ||
+  process.env.DIRECT_DATABASE_URL ||
+  process.env.DIRECT_POSTGRES_URL ||
   process.env.DATABASE_URL ||
   process.env.POSTGRES_URL ||
   process.env.SUPABASE_DB_URL ||
   process.env.URL_DO_BANCO_DE_DADOS ||
   "";
+const poolMaxConnections = Number(process.env.PG_POOL_MAX || (isVercel ? 1 : 10));
+const connectionTimeoutMillis = Number(process.env.PG_CONNECTION_TIMEOUT_MS || (isVercel ? 15000 : 10000));
+const canonicalSiteUrl = normalizeSiteUrl(
+  process.env.SITE_URL ||
+  process.env.PUBLIC_SITE_URL ||
+  process.env.APP_URL ||
+  ""
+);
+const legacyHosts = parseHostList(process.env.LEGACY_HOSTS || process.env.OLD_HOSTS || "");
 
 fs.mkdirSync(uploadsDir, { recursive: true });
 fs.mkdirSync(dataDir, { recursive: true });
@@ -49,22 +64,37 @@ const upload = multer({
   }
 });
 
+app.set("trust proxy", true);
+app.disable("etag");
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-app.get("/", (_req, res) => {
+app.use((req, res, next) => {
+  applyCacheHeaders(req, res);
+  next();
+});
+
+app.use((req, res, next) => {
+  if (!canonicalSiteUrl || !legacyHosts.size) {
+    next();
+    return;
+  }
+
+  const requestHost = normalizeHost(req.headers["x-forwarded-host"] || req.headers.host || "");
+
+  if (!legacyHosts.has(requestHost)) {
+    next();
+    return;
+  }
+
+  res.redirect(308, `${canonicalSiteUrl}${req.originalUrl}`);
+});
+
+app.get(["/", "/index.html", "/inscricao"], (_req, res) => {
   res.sendFile(path.join(__dirname, "index.html"));
 });
 
-app.get("/index.html", (_req, res) => {
-  res.sendFile(path.join(__dirname, "index.html"));
-});
-
-app.get("/admin", (_req, res) => {
-  res.sendFile(path.join(__dirname, "admin.html"));
-});
-
-app.get("/admin.html", (_req, res) => {
+app.get(["/admin", "/admin.html", "/painel"], (_req, res) => {
   res.sendFile(path.join(__dirname, "admin.html"));
 });
 
@@ -83,9 +113,10 @@ app.get("/admin.js", (_req, res) => {
 let activeStorageMode = "file";
 let storageApi;
 let storageError = null;
+let storageInitPromise = null;
 
 app.get("/api/health", async (_req, res) => {
-  await ready;
+  await ensureStorageApi();
   res.status(storageError ? 500 : 200).json({
     ok: !storageError,
     storage: activeStorageMode,
@@ -263,16 +294,46 @@ function requireAdminPassword(req, res, next) {
 }
 
 async function ensureStorageReady(res) {
-  await ready;
+  await ensureStorageApi();
 
   if (storageError || !storageApi) {
     res.status(500).json({
-      message: storageError?.message || "Banco de dados indisponível no momento."
+      message: formatStorageErrorMessage(storageError)
     });
     return false;
   }
 
   return true;
+}
+
+async function ensureStorageApi() {
+  if (storageApi && !storageError) {
+    return storageApi;
+  }
+
+  if (!storageInitPromise) {
+    storageInitPromise = initializeStorage().finally(() => {
+      storageInitPromise = null;
+    });
+  }
+
+  await storageInitPromise;
+  return storageApi;
+}
+
+async function initializeStorage() {
+  try {
+    const api = await createStorageApi();
+    storageApi = api;
+    storageError = null;
+    return app;
+  } catch (error) {
+    storageApi = null;
+    storageError = error;
+    activeStorageMode = "error";
+    console.error("Erro ao iniciar o backend:", error.message);
+    return app;
+  }
 }
 
 async function createStorageApi() {
@@ -285,6 +346,10 @@ async function createStorageApi() {
       activeStorageMode = "file";
       console.warn("Banco de dados não configurado. Usando armazenamento local em arquivo.");
       return createFileStorage();
+    }
+
+    if (isVercel && !isLikelyPooledConnection(databaseUrl)) {
+      console.warn("DATABASE_URL sem pooler detectado em ambiente serverless. Isso pode causar timeout no Supabase.");
     }
 
     await pool.query("SELECT 1");
@@ -513,13 +578,23 @@ async function writeFallbackRegistrations(rows) {
 
 function createDatabasePool() {
   if (databaseUrl) {
-    return new Pool({
+    const poolInstance = new Pool({
       connectionString: databaseUrl,
-      ssl: isVercel ? { rejectUnauthorized: false } : false,
-      connectionTimeoutMillis: 10000,
+      ssl: shouldUseSsl(databaseUrl) ? { rejectUnauthorized: false } : false,
+      max: Number.isFinite(poolMaxConnections) && poolMaxConnections > 0 ? poolMaxConnections : 1,
+      min: 0,
+      allowExitOnIdle: true,
+      connectionTimeoutMillis: connectionTimeoutMillis,
       idleTimeoutMillis: 30000,
-      keepAlive: true
+      keepAlive: true,
+      keepAliveInitialDelayMillis: 10000
     });
+
+    poolInstance.on("error", (error) => {
+      console.error("Erro inesperado no pool Postgres:", error.message);
+    });
+
+    return poolInstance;
   }
 
   return null;
@@ -568,19 +643,79 @@ function encodeDownloadName(value) {
   return String(value).replace(/"/g, "");
 }
 
-const ready = createStorageApi()
-  .then((api) => {
-    storageApi = api;
-    storageError = null;
-    return app;
-  })
-  .catch((error) => {
-    storageApi = null;
-    storageError = error;
-    activeStorageMode = "error";
-    console.error("Erro ao iniciar o backend:", error.message);
-    return app;
-  });
+function applyCacheHeaders(req, res) {
+  if (req.path.startsWith("/api/")) {
+    res.setHeader("Cache-Control", "no-store, max-age=0");
+    return;
+  }
+
+  if (
+    req.path === "/" ||
+    req.path === "/index.html" ||
+    req.path === "/admin" ||
+    req.path === "/admin.html" ||
+    req.path === "/styles.css" ||
+    req.path === "/script.js" ||
+    req.path === "/admin.js" ||
+    req.path === "/inscricao" ||
+    req.path === "/painel"
+  ) {
+    res.setHeader("Cache-Control", "no-store, max-age=0");
+  }
+}
+
+function normalizeSiteUrl(value) {
+  const trimmedValue = String(value || "").trim();
+
+  if (!trimmedValue) {
+    return "";
+  }
+
+  return trimmedValue.replace(/\/+$/, "");
+}
+
+function parseHostList(value) {
+  return new Set(
+    String(value || "")
+      .split(",")
+      .map((item) => normalizeHost(item))
+      .filter(Boolean)
+  );
+}
+
+function normalizeHost(value) {
+  return String(value || "")
+    .split(",")[0]
+    .trim()
+    .toLowerCase();
+}
+
+function shouldUseSsl(connectionString) {
+  const normalized = String(connectionString || "").toLowerCase();
+  return !normalized.includes("sslmode=disable");
+}
+
+function isLikelyPooledConnection(connectionString) {
+  const normalized = String(connectionString || "").toLowerCase();
+  return normalized.includes("pooler.supabase.com") || normalized.includes(":6543/");
+}
+
+function formatStorageErrorMessage(error) {
+  const fallbackMessage = "Banco de dados indisponível no momento.";
+  const errorMessage = String(error?.message || "").trim();
+
+  if (!errorMessage) {
+    return fallbackMessage;
+  }
+
+  if (errorMessage.toLowerCase().includes("timeout")) {
+    return "Conexao com o banco expirou. Na Vercel, prefira a URL pooled do Supabase e confirme a DATABASE_URL.";
+  }
+
+  return errorMessage;
+}
+
+const ready = ensureStorageApi();
 
 if (require.main === module) {
   ready

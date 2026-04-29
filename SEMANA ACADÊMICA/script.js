@@ -1,50 +1,46 @@
-const DEFAULT_PIX_CONFIG = {
+const DEFAULT_PIX_CONFIG = Object.freeze({
   receiverName: "Semana Acadêmica",
   city: "Balsas",
   pixKey: "pix@semanaacademica.com",
   description: "Inscrição Semana Acadêmica",
   amount: 40,
   txidPrefix: "SEMANA"
-};
+});
 
-const COURSE_PIX_CONFIG = {
-  CSA: {
+const COURSE_PIX_CONFIG = Object.freeze({
+  CSA: Object.freeze({
     receiverName: "ALISSON T CHAGAS",
     city: "BAGE",
     pixKey: "b7a378b9-61c0-4d3c-994a-419f3b82aa6f",
     description: "Pagamento Semana Academica 2026",
     amount: 40,
-    txidPrefix: "CSA",
-    staticPayload: "00020101021126930014br.gov.bcb.pix0136b7a378b9-61c0-4d3c-994a-419f3b82aa6f0231Pagamento Semana Academica 2026520400005303986540540.005802BR5916ALISSON T CHAGAS6004BAGE62070503***6304CA65"
-  },
-  Direito: {
+    txidPrefix: "CSA"
+  }),
+  Direito: Object.freeze({
     receiverName: "Marcos Gularte Gomes",
     city: "SAO PAULO",
     pixKey: "7578454c-f82c-4102-b528-8dce13bb9fb9",
     description: "Pagamento Semana Acadêmica 2026",
     amount: 40,
-    txidPrefix: "DIREITO",
-    staticPayload: "00020126580014BR.GOV.BCB.PIX01367578454c-f82c-4102-b528-8dce13bb9fb9520400005303986540540.005802BR5920Marcos Gularte Gomes6009SAO PAULO621405107XyP6lTKpZ63046885"
-  },
-  Agronomia: {
+    txidPrefix: "DIREITO"
+  }),
+  Agronomia: Object.freeze({
     receiverName: "MATHEUS VIEIRA CARDOZO",
     city: "BRASILIA",
     pixKey: "8b959e9f-f3f7-4e01-ac58-952586c8a56b",
     description: "Semana acadêmica Agronomia",
     amount: 40,
-    txidPrefix: "AGRONOMIA",
-    staticPayload: "00020101021126880014br.gov.bcb.pix01368b959e9f-f3f7-4e01-ac58-952586c8a56b0226Semana acadêmica Agronomia520400005303986540540.005802BR5922MATHEUS VIEIRA CARDOZO6008BRASILIA62070503***6304B646"
-  },
-  Psicologia: {
+    txidPrefix: "AGRONOMIA"
+  }),
+  Psicologia: Object.freeze({
     receiverName: "Giovana Beck Saracol",
     city: "SAO PAULO",
     pixKey: "+5553999458649",
     description: "Pagamento Semana Acadêmica 2026",
     amount: 40,
-    txidPrefix: "PSICOLOGIA",
-    staticPayload: "00020126360014BR.GOV.BCB.PIX0114+5553999458649520400005303986540540.005802BR5920Giovana Beck Saracol6009SAO PAULO62140510aP3pTd2Dk16304790B"
-  }
-};
+    txidPrefix: "PSICOLOGIA"
+  })
+});
 
 const form = document.getElementById("registrationForm");
 const generatePixButton = document.getElementById("generatePixButton");
@@ -64,6 +60,7 @@ const steps = document.querySelectorAll(".progress-step");
 const cpfInput = document.getElementById("cpf");
 const phoneInput = document.getElementById("phone");
 const courseSelect = document.getElementById("course");
+const studentNameInput = document.getElementById("studentName");
 const summaryAmount = document.getElementById("summaryAmount");
 const qrCodeCanvas = document.getElementById("qrcodeCanvas");
 const qrCodeImage = document.getElementById("qrcodeImage");
@@ -83,8 +80,12 @@ phoneInput.addEventListener("input", () => {
 
 courseSelect.addEventListener("change", () => {
   updateSummary();
+  invalidateGeneratedPayment("Curso alterado. Gere o Pix novamente para evitar um QR Code desatualizado.");
   setStepState(0);
-  resetPaymentState();
+});
+
+studentNameInput.addEventListener("input", () => {
+  invalidateGeneratedPayment("Nome alterado. Gere o Pix novamente para manter o pagamento sincronizado.");
 });
 
 paymentProofInput.addEventListener("change", () => {
@@ -117,27 +118,30 @@ generatePixButton.addEventListener("click", async () => {
   const formData = new FormData(form);
   const studentName = String(formData.get("studentName") || "").trim();
   const course = String(formData.get("course") || "").trim();
-  const pixConfig = getPixConfig(course);
-  const txid = buildTxid(studentName, course, pixConfig.txidPrefix);
-  const payload = String(pixConfig.staticPayload || buildPixPayload({
-    pixKey: pixConfig.pixKey,
-    receiverName: pixConfig.receiverName,
-    city: pixConfig.city,
-    description: `${pixConfig.description} - ${course}`,
-    amount: pixConfig.amount,
-    txid
-  })).trim();
-
-  paymentGenerated = true;
-  lastPixPayload = payload;
-  pixPayloadField.value = payload;
-  pixArea.classList.remove("hidden");
-  paymentProofWrap.classList.remove("hidden");
-  finishButton.disabled = !paymentProofInput.files?.length;
-  setStepState(2);
-  statusMessage.textContent = "Pix gerado. Pague, anexe o comprovante e finalize a inscrição.";
 
   try {
+    const pixConfig = getPixConfig(course);
+
+    validatePixConfig(pixConfig, course);
+
+    const payload = buildPixPayload({
+      pixKey: pixConfig.pixKey,
+      receiverName: pixConfig.receiverName,
+      city: pixConfig.city,
+      description: `${pixConfig.description} - ${course}`,
+      amount: pixConfig.amount,
+      txid: buildTxid(studentName, course, pixConfig.txidPrefix)
+    });
+
+    paymentGenerated = true;
+    lastPixPayload = payload;
+    pixPayloadField.value = payload;
+    pixArea.classList.remove("hidden");
+    paymentProofWrap.classList.remove("hidden");
+    finishButton.disabled = !paymentProofInput.files?.length;
+    setStepState(2);
+    statusMessage.textContent = "Pix gerado. Pague, anexe o comprovante e finalize a inscrição.";
+
     await renderQrCode(payload);
   } catch (error) {
     console.error(error);
@@ -178,6 +182,13 @@ form.addEventListener("submit", async (event) => {
   const studentName = formData.get("studentName");
   const course = formData.get("course");
   const pixConfig = getPixConfig(course);
+  try {
+    validatePixConfig(pixConfig, String(course || ""));
+  } catch (error) {
+    statusMessage.textContent = error.message;
+    return;
+  }
+
   formData.append("pixPayload", lastPixPayload);
   formData.append("receiverName", pixConfig.receiverName);
   formData.append("pixKey", pixConfig.pixKey);
@@ -203,6 +214,7 @@ form.addEventListener("submit", async (event) => {
 
     form.reset();
     resetPaymentState();
+    updateSummary();
     setStepState(0);
     successCard.scrollIntoView({ behavior: "smooth", block: "start" });
   } catch (error) {
@@ -210,6 +222,15 @@ form.addEventListener("submit", async (event) => {
     statusMessage.textContent = error.message;
   }
 });
+
+function invalidateGeneratedPayment(message) {
+  if (!paymentGenerated) {
+    return;
+  }
+
+  resetPaymentState();
+  statusMessage.textContent = message;
+}
 
 function resetPaymentState() {
   paymentGenerated = false;
@@ -219,11 +240,13 @@ function resetPaymentState() {
   paymentProofInput.value = "";
   proofPreview.classList.add("hidden");
   finishButton.disabled = true;
+
   if (qrCodeCanvas) {
     const context = qrCodeCanvas.getContext("2d");
     context?.clearRect(0, 0, qrCodeCanvas.width, qrCodeCanvas.height);
     qrCodeCanvas.classList.remove("hidden");
   }
+
   if (qrCodeImage) {
     qrCodeImage.removeAttribute("src");
     qrCodeImage.classList.add("hidden");
@@ -231,7 +254,29 @@ function resetPaymentState() {
 }
 
 function getPixConfig(course) {
-  return COURSE_PIX_CONFIG[course] || DEFAULT_PIX_CONFIG;
+  return {
+    ...DEFAULT_PIX_CONFIG,
+    ...(COURSE_PIX_CONFIG[course] || {})
+  };
+}
+
+function validatePixConfig(pixConfig, course) {
+  const requiredFields = [
+    ["receiverName", pixConfig.receiverName],
+    ["city", pixConfig.city],
+    ["pixKey", pixConfig.pixKey],
+    ["description", pixConfig.description]
+  ];
+
+  for (const [fieldName, value] of requiredFields) {
+    if (!String(value || "").trim()) {
+      throw new Error(`A configuração do Pix para ${course || "o curso selecionado"} está incompleta: ${fieldName}.`);
+    }
+  }
+
+  if (!Number.isFinite(pixConfig.amount) || Number(pixConfig.amount) <= 0) {
+    throw new Error(`O valor do Pix para ${course || "o curso selecionado"} é inválido.`);
+  }
 }
 
 function updateSummary() {
@@ -319,9 +364,11 @@ function buildTxid(studentName, course, txidPrefix = DEFAULT_PIX_CONFIG.txidPref
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
     .replace(/[^a-zA-Z0-9]/g, "")
-    .toUpperCase();
+    .toUpperCase()
+    .slice(0, 19);
+  const suffix = Date.now().toString(36).toUpperCase().slice(-6);
 
-  return (base || "SEMANA").slice(0, 25);
+  return `${base || "SEMANA"}${suffix}`.slice(0, 25);
 }
 
 function buildPixPayload({ pixKey, receiverName, city, description, amount, txid }) {
@@ -336,7 +383,7 @@ function buildPixPayload({ pixKey, receiverName, city, description, amount, txid
     formatField("26", merchantAccount),
     formatField("52", "0000"),
     formatField("53", "986"),
-    formatField("54", amount.toFixed(2)),
+    formatField("54", Number(amount).toFixed(2)),
     formatField("58", "BR"),
     formatField("59", sanitizePixText(receiverName, 25)),
     formatField("60", sanitizePixText(city, 15)),
@@ -349,8 +396,9 @@ function buildPixPayload({ pixKey, receiverName, city, description, amount, txid
 }
 
 function formatField(id, value) {
-  const size = String(value.length).padStart(2, "0");
-  return `${id}${size}${value}`;
+  const normalizedValue = String(value);
+  const size = String(normalizedValue.length).padStart(2, "0");
+  return `${id}${size}${normalizedValue}`;
 }
 
 function sanitizePixText(value, maxLength) {
