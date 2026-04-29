@@ -2,6 +2,7 @@ const app = require("../server");
 
 module.exports = async (req, res) => {
   try {
+    await app.ready;
     return app(req, res);
   } catch (error) {
     console.error("Erro no handler da Vercel:", error);
