@@ -56,12 +56,28 @@ app.get("/", (_req, res) => {
   res.sendFile(path.join(__dirname, "index.html"));
 });
 
+app.get("/index.html", (_req, res) => {
+  res.sendFile(path.join(__dirname, "index.html"));
+});
+
 app.get("/admin", (_req, res) => {
   res.sendFile(path.join(__dirname, "admin.html"));
 });
 
-app.get(["/styles.css", "/script.js", "/admin.js", "/index.html", "/admin.html"], (req, res) => {
-  res.sendFile(path.join(__dirname, path.basename(req.path)));
+app.get("/admin.html", (_req, res) => {
+  res.sendFile(path.join(__dirname, "admin.html"));
+});
+
+app.get("/styles.css", (_req, res) => {
+  res.sendFile(path.join(__dirname, "styles.css"));
+});
+
+app.get("/script.js", (_req, res) => {
+  res.sendFile(path.join(__dirname, "script.js"));
+});
+
+app.get("/admin.js", (_req, res) => {
+  res.sendFile(path.join(__dirname, "admin.js"));
 });
 
 let activeStorageMode = "file";
