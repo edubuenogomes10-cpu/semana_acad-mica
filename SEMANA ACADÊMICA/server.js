@@ -1,4 +1,5 @@
-require("dotenv").config();
+const path = require("path");
+require("dotenv").config({ path: path.join(__dirname, ".env") });
 
 const express = require("express");
 const multer = require("multer");
@@ -6,7 +7,6 @@ const { Pool } = require("pg");
 const QRCode = require("qrcode");
 const fs = require("fs");
 const os = require("os");
-const path = require("path");
 
 const app = express();
 const port = Number(process.env.PORT || 3000);
@@ -18,7 +18,12 @@ const uploadsDir = path.join(baseRuntimeDir, "uploads");
 const dataDir = path.join(baseRuntimeDir, "data");
 const fallbackDatabaseFile = path.join(dataDir, "registrations.json");
 const adminPassword = process.env.ADMIN_PASSWORD || "Ideau@2026";
-const databaseUrl = process.env.DATABASE_URL || process.env.POSTGRES_URL || process.env.SUPABASE_DB_URL || "";
+const databaseUrl =
+  process.env.DATABASE_URL ||
+  process.env.POSTGRES_URL ||
+  process.env.SUPABASE_DB_URL ||
+  process.env.URL_DO_BANCO_DE_DADOS ||
+  "";
 
 fs.mkdirSync(uploadsDir, { recursive: true });
 fs.mkdirSync(dataDir, { recursive: true });
@@ -245,7 +250,7 @@ async function ensureStorageReady(res) {
   await ready;
 
   if (storageError || !storageApi) {
-    res.status(503).json({
+    res.status(500).json({
       message: storageError?.message || "Banco de dados indisponível no momento."
     });
     return false;
